@@ -33,6 +33,16 @@ NO_FIX = 0.85
 EXPLOIT_KNOWN = 1.30
 NO_EXPLOIT = 1.0
 
+# EPSS multipliers. Thresholds follow the shape of the published EPSS
+# distribution: >=0.7 is roughly the top 1% of all scored CVEs, >=0.3 the top
+# few percent. Absent data is neutral (1.0), never punitive -- most advisories
+# have no CVE alias and therefore no score, and they must not be demoted for it.
+EPSS_CRITICAL = 1.40   # p >= 0.70 : actively exploited in the wild
+EPSS_HIGH = 1.20       # p >= 0.30
+EPSS_MODERATE = 1.05   # p >= 0.10
+EPSS_LOW = 0.90        # p <  0.10 : real, but nobody is exploiting it
+EPSS_ABSENT = 1.00     # no score available
+
 ACTIONABLE_THRESHOLD = 4.0
 
 
@@ -55,6 +65,26 @@ def exploit_factor(finding: Finding) -> float:
     return EXPLOIT_KNOWN if finding.vulnerability.exploit_known else NO_EXPLOIT
 
 
+def epss_factor(finding: Finding) -> float:
+    """Multiplier derived from exploit probability.
+
+    Deliberately bounded to [0.90, 1.40] so EPSS *modulates* the ranking but can
+    never override reachability. A 10.0-CVSS unreachable finding with maximum
+    EPSS still scores 10.0 x 0.1 x 1.40 = 1.40, below a mid-severity reachable
+    one -- which is the ordering the whole project argues for.
+    """
+    if finding.epss is None:
+        return EPSS_ABSENT
+    p = finding.epss.probability
+    if p >= 0.70:
+        return EPSS_CRITICAL
+    if p >= 0.30:
+        return EPSS_HIGH
+    if p >= 0.10:
+        return EPSS_MODERATE
+    return EPSS_LOW
+
+
 def compute_risk(finding: Finding) -> float:
     """Composite risk score on the 0-10 CVSS scale."""
     v = finding.vulnerability
@@ -65,6 +95,7 @@ def compute_risk(finding: Finding) -> float:
         * dependency_factor(finding)
         * fix_factor(finding)
         * exploit_factor(finding)
+        * epss_factor(finding)
     )
     return max(0.0, min(10.0, score))
 
@@ -94,6 +125,15 @@ def explain(finding: Finding) -> list[str]:
         lines.append(f"Advisory is network-reachable (x{EXPOSURE_NETWORK}).")
     if v.exploit_known:
         lines.append(f"Public exploitation reported (x{EXPLOIT_KNOWN}).")
+
+    if finding.epss is not None:
+        lines.append(
+            f"EPSS {finding.epss.probability:.1%} probability of exploitation "
+            f"in 30 days ({finding.epss.band}, {finding.epss.percentile:.1%} "
+            f"percentile) (x{epss_factor(finding):.2f})."
+        )
+    elif v.cve_id:
+        lines.append(f"No EPSS score published for {v.cve_id} (neutral).")
 
     lines.append(
         f"{'Direct' if finding.package.direct else 'Transitive'} dependency "

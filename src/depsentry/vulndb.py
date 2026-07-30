@@ -31,9 +31,13 @@ CREATE TABLE IF NOT EXISTS advisories (
     cwe              TEXT NOT NULL DEFAULT '[]',
     published        TEXT NOT NULL DEFAULT '',
     exploit_known    INTEGER NOT NULL DEFAULT 0,
-    network_exposed  INTEGER NOT NULL DEFAULT 0
+    network_exposed  INTEGER NOT NULL DEFAULT 0,
+    osv_id           TEXT,
+    cve_id           TEXT,
+    symbol_source    TEXT NOT NULL DEFAULT 'local'
 );
 CREATE INDEX IF NOT EXISTS idx_advisories_package ON advisories(package, ecosystem);
+CREATE INDEX IF NOT EXISTS idx_advisories_osv ON advisories(osv_id);
 """
 
 _VERSION_PART = re.compile(r"(\d+|[a-zA-Z]+)")
@@ -103,7 +107,24 @@ class VulnerabilityDB:
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created.
+
+        SQLite has no `ADD COLUMN IF NOT EXISTS`, so existing columns are read
+        first and only the missing ones are added. Keeps older advisory stores
+        usable instead of forcing a re-seed.
+        """
+        have = {r[1] for r in self._conn.execute("PRAGMA table_info(advisories)")}
+        for column, ddl in (
+            ("osv_id", "TEXT"),
+            ("cve_id", "TEXT"),
+            ("symbol_source", "TEXT NOT NULL DEFAULT 'local'"),
+        ):
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE advisories ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
         self._conn.close()
@@ -120,8 +141,8 @@ class VulnerabilityDB:
             INSERT OR REPLACE INTO advisories
                 (vuln_id, package, ecosystem, introduced, fixed, cvss_score,
                  cvss_vector, summary, affected_symbols, cwe, published,
-                 exploit_known, network_exposed)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 exploit_known, network_exposed, osv_id, cve_id, symbol_source)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 vuln.vuln_id,
@@ -137,6 +158,9 @@ class VulnerabilityDB:
                 vuln.published,
                 int(vuln.exploit_known),
                 int(vuln.network_exposed),
+                vuln.osv_id,
+                vuln.cve_id,
+                vuln.symbol_source,
             ),
         )
         self._conn.commit()
@@ -162,6 +186,9 @@ class VulnerabilityDB:
             published=row["published"],
             exploit_known=bool(row["exploit_known"]),
             network_exposed=bool(row["network_exposed"]),
+            osv_id=row["osv_id"] if "osv_id" in row.keys() else None,
+            cve_id=row["cve_id"] if "cve_id" in row.keys() else None,
+            symbol_source=(row["symbol_source"] if "symbol_source" in row.keys() else None) or "local",
         )
 
     def all_advisories(self) -> list[Vulnerability]:
@@ -191,6 +218,30 @@ class VulnerabilityDB:
             for vuln in self.for_package(pkg):
                 matches.append((pkg, vuln))
         return matches
+
+    def import_osv_advisories(self, advisories: list[Vulnerability]) -> int:
+        """Cache OSV-sourced advisories locally for offline reuse.
+
+        Deduplicated on (osv_id, package, introduced) rather than vuln_id alone,
+        because one advisory legitimately produces several rows when it declares
+        multiple disjoint affected ranges. Returns the number newly inserted.
+        """
+        existing = {
+            (row["osv_id"], row["package"], row["introduced"])
+            for row in self._conn.execute(
+                "SELECT osv_id, package, introduced FROM advisories WHERE osv_id IS NOT NULL"
+            ).fetchall()
+        }
+
+        inserted = 0
+        for vuln in advisories:
+            key = (vuln.osv_id, vuln.package, vuln.introduced)
+            if vuln.osv_id and key in existing:
+                continue
+            self.add(vuln)
+            existing.add(key)
+            inserted += 1
+        return inserted
 
     def import_osv(self, records: list[dict]) -> int:
         """Import records in real OSV JSON format.

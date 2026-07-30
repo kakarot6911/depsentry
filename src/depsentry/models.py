@@ -106,6 +106,20 @@ class Vulnerability:
     exploit_known: bool = False
     network_exposed: bool = False
 
+    # -- provenance, populated when the advisory came from OSV.dev ---------
+    osv_id: str | None = None
+    """Upstream OSV identifier (GHSA-…, PYSEC-…, GO-…) when live-sourced."""
+
+    cve_id: str | None = None
+    """CVE alias, if the advisory has one. EPSS is keyed on CVE, so this is
+    what the EPSS client looks up; GHSA-only advisories have no EPSS score."""
+
+    symbol_source: str = "local"
+    """Where `affected_symbols` came from: 'upstream' (OSV itself), 'overlay'
+    (local curated map), 'none' (no symbol data available), or 'local' (the
+    bundled synthetic corpus). Kept explicit so an overlay-sourced symbol is
+    never mistaken for upstream data."""
+
     @property
     def severity(self) -> Severity:
         return Severity.from_cvss(self.cvss_score)
@@ -113,6 +127,41 @@ class Vulnerability:
     @property
     def has_fix(self) -> bool:
         return self.fixed is not None
+
+    @property
+    def is_traceable(self) -> bool:
+        """True when reachability analysis can say anything about this advisory."""
+        return bool(self.affected_symbols)
+
+
+@dataclass(frozen=True)
+class EPSSScore:
+    """Exploit Prediction Scoring System result for one CVE.
+
+    EPSS estimates the probability a vulnerability will be exploited in the wild
+    within the next 30 days. It answers a different question from CVSS: CVSS
+    says how bad exploitation *would* be, EPSS says how likely it *is*.
+
+    Only CVE identifiers have EPSS scores. GHSA-only advisories have none.
+    """
+
+    cve_id: str
+    probability: float
+    """0-1. Chance of observed exploitation in the next 30 days."""
+
+    percentile: float
+    """0-1. Rank relative to all scored CVEs."""
+
+    @property
+    def band(self) -> str:
+        """Qualitative band, used for display and for the risk multiplier."""
+        if self.probability >= 0.7:
+            return "CRITICAL"
+        if self.probability >= 0.3:
+            return "HIGH"
+        if self.probability >= 0.1:
+            return "MODERATE"
+        return "LOW"
 
 
 @dataclass
@@ -144,6 +193,14 @@ class Finding:
     baseline_score: float = 0.0
     rank: int = 0
     rationale: list[str] = field(default_factory=list)
+    epss: "EPSSScore | None" = None
+    """Exploit probability, when the advisory has a CVE alias and EPSS is on."""
+
+    remediation_advice: str | None = None
+    """LLM-generated, code-specific fix guidance. None unless enabled."""
+
+    path_detail: list[dict] = field(default_factory=list)
+    """Call path enriched with file/line locations; see callgraph.path_detail()."""
 
     @property
     def finding_id(self) -> str:
@@ -177,6 +234,20 @@ class Finding:
             "summary": self.vulnerability.summary,
             "call_paths": [p.render() for p in self.call_paths],
             "rationale": self.rationale,
+            "cve_id": self.vulnerability.cve_id,
+            "osv_id": self.vulnerability.osv_id,
+            "symbol_source": self.vulnerability.symbol_source,
+            "epss": (
+                {
+                    "probability": round(self.epss.probability, 6),
+                    "percentile": round(self.epss.percentile, 6),
+                    "band": self.epss.band,
+                }
+                if self.epss
+                else None
+            ),
+            "remediation_advice": self.remediation_advice,
+            "path_detail": self.path_detail,
         }
 
 
