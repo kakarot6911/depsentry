@@ -160,12 +160,12 @@ Reachability analysis needs to know *which function* an advisory affects. OSV
 has a field for this — `affected[].ecosystem_specific.imports[]`, carrying
 `path` and `symbols`.
 
-Sampling **171 real PyPI advisories** across requests, urllib3, django, pyyaml,
-jinja2, numpy and pillow (2026-07-31):
+Measured twice, at two scales (2026-07-31):
 
-| Source | Advisories sampled | With symbol data |
+| Source | Advisories | With symbol data |
 |---|---|---|
-| PyPI (PYSEC / GHSA) | 171 | **0 (0%)** |
+| PyPI — exploratory sample (requests, urllib3, django, pyyaml, jinja2, numpy, pillow) | 171 | **0 (0%)** |
+| PyPI — full benchmark corpus, 16 packages (`experiments/evaluate_live.py`) | 121 | **0 (0%)** |
 | Go (`GO-` vulndb) | spot-checked | populated — e.g. `GO-2021-0053` lists `["unmarshal.Generate", "unmarshal.field"]` |
 
 The field exists and the Go ecosystem populates it well. **The Python advisory
@@ -173,9 +173,31 @@ sources do not populate it at all.**
 
 ### Consequence: the core contribution is inert against live PyPI data
 
-A live scan of the showcase app returned **100 real advisories across 27
-packages**, of which **55 were unassessable** — the advisory named no symbol, so
-reachability could reach no verdict. Every one landed UNKNOWN.
+Running the **full 40-project benchmark against real advisories**
+(`experiments/evaluate_live.py`, results in `reports/evaluation_live.md`):
+
+| | Upstream symbols only | With curated overlay |
+|---|---|---|
+| Total findings | 1,349 | 1,349 |
+| CVSS ≥ 7.0 gate would alert | 518 | 518 |
+| DepSentry actionable | **0** | 468 |
+| **Unassessable (UNKNOWN)** | **1,349 (100%)** | 116 (8.6%) |
+
+**Without a symbol overlay, DepSentry assesses nothing and surfaces nothing.**
+Not "performs poorly" — produces no verdict at all, on every one of 1,349 real
+findings.
+
+Two further observations:
+
+- **Real alert load is 5.2× the synthetic corpus** (1,349 vs 259 advisory
+  instances over the same 40 projects). The triage problem is worse in reality
+  than the benchmark suggests.
+- **With the overlay, volume reduction against the CVSS gate is 518 → 468, only
+  9.7%** — far below the 25.2% measured on synthetic data. Overlay symbols are
+  coarse (a package's whole dangerous API surface, not one advisory's specific
+  function), so they over-attribute reachability. This is the expected direction
+  for a heuristic that errs toward false positives, and it is the honest ceiling
+  on what the overlay can deliver.
 
 This is the honest headline for real-world deployment today: *the method is
 sound, and the data needed to run it does not exist for Python.* The 100%

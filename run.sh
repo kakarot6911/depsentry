@@ -108,6 +108,14 @@ cmd_scan() {
     python3 -m depsentry.cli scan "$target" --out reports "$@"
 }
 
+cmd_evaluate_live() {
+    banner "Live characterization study (real OSV.dev advisories)"
+    echo "  Network required on first run; cached thereafter."
+    echo "  Reports no precision/recall -- real advisories carry no labels."
+    echo
+    python3 experiments/evaluate_live.py "$@"
+}
+
 cmd_scan_live() {
     if [ $# -lt 1 ]; then
         echo "usage: ./run.sh scan-live <project-path> [extra args...]" >&2
@@ -220,6 +228,7 @@ case "${1:-all}" in
     evaluate)  cmd_evaluate ;;
     scan)      shift; cmd_scan "$@" ;;
     scan-live) shift; cmd_scan_live "$@" ;;
+    evaluate-live) shift || true; cmd_evaluate_live "$@" ;;
     build-viz) cmd_build_viz ;;
     viz)       shift || true; cmd_viz "$@" ;;
     dashboard) shift || true; cmd_dashboard "$@" ;;
@@ -227,7 +236,8 @@ case "${1:-all}" in
     all)       cmd_all ;;
     *)
         echo "usage: ./run.sh {setup|test|demo|evaluate|scan <path>|" >&2
-        echo "                 scan-live <path>|viz [path]|build-viz|dashboard|api|all}" >&2
+        echo "                 scan-live <path>|evaluate-live|viz [path]|build-viz|" >&2
+        echo "                 dashboard|api|all}" >&2
         echo "       dashboard and api accept --network to bind 0.0.0.0" >&2
         exit 2
         ;;

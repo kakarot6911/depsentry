@@ -8,6 +8,8 @@ venv/
 
 # Generated artifacts -- reproducible via ./run.sh setup
 data/vulndb.sqlite3
+data/vulndb_live*.sqlite3
+data/remediation_cache.sqlite3
 benchmark/
 reports/
 *.key

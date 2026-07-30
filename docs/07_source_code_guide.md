@@ -106,6 +106,7 @@ Python 3.11+ required (`tomllib`). Developed on 3.14.
 ./run.sh evaluate         # research evaluation
 ./run.sh scan <path>      # scan any Python project (offline, local corpus)
 ./run.sh scan-live <path> # scan against real OSV.dev advisories + EPSS
+./run.sh evaluate-live    # live characterization study (no labels -> no P/R)
 ./run.sh build-viz        # compile the Rust engine to wasm
 ./run.sh viz [path]       # 3D attack surface (default: showcase_app)
 ./run.sh dashboard        # Streamlit UI (loopback; --network to expose)
