@@ -148,6 +148,79 @@ implemented and unit-tested, but the generated corpus contains no dynamic
 dispatch and every advisory carries symbol data. That is a property of the
 benchmark, not evidence those paths are unused — and it is a limitation, below.
 
+## 5.5b Live validation against real OSV data — the blocking obstacle
+
+Sections 5.2–5.5 use the synthetic corpus. This section reports what happened
+when DepSentry was pointed at **real advisories from OSV.dev** (`--live`), and it
+is the most consequential result in the project.
+
+### Measurement: PyPI advisories carry no symbol data
+
+Reachability analysis needs to know *which function* an advisory affects. OSV
+has a field for this — `affected[].ecosystem_specific.imports[]`, carrying
+`path` and `symbols`.
+
+Sampling **171 real PyPI advisories** across requests, urllib3, django, pyyaml,
+jinja2, numpy and pillow (2026-07-31):
+
+| Source | Advisories sampled | With symbol data |
+|---|---|---|
+| PyPI (PYSEC / GHSA) | 171 | **0 (0%)** |
+| Go (`GO-` vulndb) | spot-checked | populated — e.g. `GO-2021-0053` lists `["unmarshal.Generate", "unmarshal.field"]` |
+
+The field exists and the Go ecosystem populates it well. **The Python advisory
+sources do not populate it at all.**
+
+### Consequence: the core contribution is inert against live PyPI data
+
+A live scan of the showcase app returned **100 real advisories across 27
+packages**, of which **55 were unassessable** — the advisory named no symbol, so
+reachability could reach no verdict. Every one landed UNKNOWN.
+
+This is the honest headline for real-world deployment today: *the method is
+sound, and the data needed to run it does not exist for Python.* The 100%
+precision reported in §5.2 describes conditions — full symbol coverage — that
+live PyPI advisories do not currently provide.
+
+### A bug this exposed in our own headline metric
+
+The first live run printed **"noise-cut 100%"** while having assessed nothing.
+`noise_reduction()` divided suppressed findings by *all* findings, and UNKNOWN
+findings — the ones we explicitly could not evaluate — were counted in the
+numerator as though they had been safely ruled out.
+
+That is a silent false negative wearing the headline metric's clothes, and it
+was invisible under the synthetic corpus because that corpus has 100% symbol
+coverage and therefore produces no UNKNOWN verdicts at all. The metric now
+divides over **assessed findings only**, and the console surfaces a separate
+`needs-review` count that cannot be confused with suppression.
+
+The synthetic benchmark could not have caught this. Only real data did.
+
+### Mitigation and its honest limits
+
+`data/symbol_overlay.json` provides a curated advisory-ID → symbols map, with an
+opt-in package-level heuristic (`--overlay-heuristic`) that attributes a
+library's known dangerous API surface to any advisory on that library. With the
+heuristic enabled, the same live scan resolves **8 REACHABLE findings with real
+call paths** against genuine GHSA and PYSEC identifiers.
+
+**The heuristic is a guess, not a fact**, and the design reflects that: it is
+off by default, every finding records its `symbol_source` (`upstream` /
+`overlay` / `none`), and coverage statistics print on every live scan. It errs
+toward marking findings REACHABLE — a false positive — rather than hiding them.
+
+### What this changes about the project's claims
+
+1. The reachability method is **validated in principle** and **blocked in
+   practice for PyPI** by upstream data availability.
+2. The single highest-value contribution this project could make to the
+   ecosystem is not a better analyser — it is **advisory symbol data**.
+   Go's vulndb demonstrates the format is workable at scale.
+3. Future work item #1 (real-project validation) is now revised: it must be
+   paired with symbol curation, because the advisories alone will not support it.
+
+
 ## 5.6 Threats to validity
 
 Stated plainly, because a results chapter that only reports favourable framing
@@ -173,11 +246,12 @@ made anywhere in this project.
 
 ### Internal validity
 
-- **Advisory corpus is synthetic** (`DEPS-` identifiers, 30 advisories). Real
-  advisory symbol data is sparser and noisier; OSV records often omit symbols
-  entirely, which would push many findings into UNKNOWN.
-- **Symbol coverage is 100%** in the corpus versus perhaps 20–40% in real OSV
-  data. Coverage directly caps how much of the benefit is achievable.
+- **Advisory corpus is synthetic** (`DEPS-` identifiers, 30 advisories).
+- **Symbol coverage is 100% in the corpus and 0% in live PyPI data** — measured,
+  not estimated (§5.5b). An earlier draft of this document guessed "perhaps
+  20–40%"; the real figure for PyPI is zero. Coverage directly caps how much of
+  the benefit is achievable, so on live PyPI data today the achievable benefit
+  without a symbol overlay is nil.
 - **Risk-fusion weights are unvalidated.** The multipliers are reasoned, not
   learned. The ablation shows the result is driven by reachability, so the
   weights are not load-bearing for the headline — but they are not evidence-based
@@ -224,16 +298,22 @@ is recorded rather than suppressed.
    corpus, costing recall for no precision gain (§5.4).
 5. **The measured performance is an upper bound.** The synthetic benchmark
    validates the implementation; it does not establish real-world accuracy.
+6. **Against live PyPI advisories the method currently cannot run**, because
+   0 of 171 sampled advisories carry the symbol data it depends on (§5.5b). The
+   bottleneck is advisory data, not analysis technique.
 
 ## 5.9 Future work
 
 Ordered by what would most strengthen the claim:
 
-1. **Real-project validation.** Manually label reachability for 10–20 real
-   open-source projects against genuine OSV advisories. This directly attacks
-   the construct-validity limitation and is the single most valuable next step.
-2. **Live OSV integration.** `import_osv()` already exists; measure how symbol
-   sparsity in real advisories degrades the benefit.
+1. **Advisory symbol curation.** Now the top priority, ahead of real-project
+   validation — §5.5b shows the latter is blocked without it. Curate
+   advisory-ID → symbol mappings for the most-depended-on PyPI packages and
+   contribute them upstream. Go's vulndb proves the format works at scale.
+2. **Real-project validation, paired with curation.** Manually label
+   reachability for 10–20 real open-source projects against genuine OSV
+   advisories plus curated symbols. This attacks the construct-validity
+   limitation, but cannot proceed on advisories alone.
 3. **Inter-procedural and framework-aware analysis.** Resolve dependency
    injection and decorator-mediated invocation to shrink the
    POTENTIALLY_REACHABLE class.

@@ -23,7 +23,12 @@ depsentry/
 │   ├── integrity.py              Signing, hash-chained audit log
 │   ├── report.py                 Markdown / JSON / SARIF rendering
 │   ├── pipeline.py               Stage orchestration
-│   └── cli.py                    Command line interface
+│   ├── cli.py                    Command line interface
+│   ├── osv_client.py             Live OSV.dev advisories + symbol overlay
+│   ├── epss_client.py            EPSS exploit-probability lookups
+│   ├── vex.py                    OpenVEX 0.2.0 generation
+│   ├── remediation.py            LLM fix guidance (optional)
+│   └── viz3d.py                  Bridge to the Rust 3D renderer
 │
 ├── data/
 │   ├── seed_vulndb.py            Build the advisory corpus
@@ -48,10 +53,15 @@ depsentry/
 ├── api/main.py                   FastAPI service
 ├── dashboard/app.py              Streamlit dashboard (4 tabs, incl. 3D)
 │
-├── tests/                        56 tests
+├── tests/                        187 tests
 │   ├── conftest.py               Project-tree fixtures
 │   ├── test_reachability.py      Core claim
-│   └── test_core.py              Everything else
+│   ├── test_core.py              SBOM, risk, integrity, pipeline
+│   ├── test_call_paths.py        file:line evidence + SARIF codeFlows
+│   ├── test_osv_client.py        Live advisories (mocked)
+│   ├── test_epss.py              Exploit probability (mocked)
+│   ├── test_vex.py               OpenVEX statements
+│   └── test_remediation.py       LLM guidance (mocked)
 │
 ├── reports/                      Generated output
 │   ├── evaluation.json / .md     Research results
@@ -94,7 +104,8 @@ Python 3.11+ required (`tomllib`). Developed on 3.14.
 ./run.sh test             # pytest + headless wasm engine test
 ./run.sh demo             # motivating example: safe vs unsafe
 ./run.sh evaluate         # research evaluation
-./run.sh scan <path>      # scan any Python project
+./run.sh scan <path>      # scan any Python project (offline, local corpus)
+./run.sh scan-live <path> # scan against real OSV.dev advisories + EPSS
 ./run.sh build-viz        # compile the Rust engine to wasm
 ./run.sh viz [path]       # 3D attack surface (default: showcase_app)
 ./run.sh dashboard        # Streamlit UI (loopback; --network to expose)
@@ -124,6 +135,11 @@ python3 -m depsentry.cli sbom ./myproject --out sbom.json
 python3 -m depsentry.cli scan ./myproject --out reports --fail-on 7.0
 python3 -m depsentry.cli scan ./myproject --sign key.pem
 python3 -m depsentry.cli verify-log
+
+# Live data (all opt-in; every path falls back cleanly)
+python3 -m depsentry.cli scan ./myproject --live --cache
+python3 -m depsentry.cli scan ./myproject --live --overlay-heuristic
+python3 -m depsentry.cli scan ./myproject --remediation-limit 10   # needs ANTHROPIC_API_KEY
 ```
 
 Exit codes: `0` pass, `1` gate breached, `2` bad input.
@@ -179,7 +195,9 @@ security tab without breaking the build.
 
 | To do this | Change this |
 |---|---|
-| Use real OSV data | `VulnerabilityDB.import_osv()` — no other change needed |
+| Use real OSV data | `--live` (built in); bulk import via `VulnerabilityDB.import_osv()` |
+| Curate advisory symbols | `data/symbol_overlay.json` → `by_advisory` |
+| Change the remediation model | `DEPSENTRY_LLM_MODEL` env var |
 | Add a distribution→import alias | `_IMPORT_ALIASES` in `reachability.py` |
 | Recognise a new framework's entrypoints | `_ENTRYPOINT_DECORATORS` in `callgraph.py` |
 | Adjust risk weights | Module-level constants in `risk.py` |
@@ -202,12 +220,15 @@ Deterministic. Any run on the same seed reproduces every figure in
 
 | Component | Files | Lines |
 |---|---|---|
-| Analysis core (`src/depsentry/`) | 10 | ~1,900 |
-| Interfaces (`api/`, `dashboard/`) | 2 | ~400 |
+| Analysis core (`src/depsentry/`) | 15 | ~3,200 |
+| Interfaces (`api/`, `dashboard/`) | 2 | ~560 |
 | Data generation (`data/`) | 2 | ~450 |
 | Evaluation (`experiments/`) | 1 | ~300 |
-| Tests (`tests/`) | 3 | ~650 |
-| **Total Python** | **19** | **3,715** |
+| Tests (`tests/`) | 8 | ~1,900 |
+| Demo fixture (`examples/`) | 6 | ~90 |
+| **Total Python** | **35** | **6,943** |
+| Rust (`viz/src/lib.rs`) | 1 | 523 |
+| JS / HTML (renderer) | 2 | 433 |
 | Documentation (`docs/`) | 11 | — |
 
-Tests: 56, all passing, ~0.3 s.
+Tests: **187 pytest + 1 headless WASM engine test**, all passing, ~1 s.

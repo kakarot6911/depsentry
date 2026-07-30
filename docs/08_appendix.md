@@ -65,6 +65,11 @@ typing-extensions, anyio, h11.
 5. CVSS v3.1 Specification, FIRST — https://www.first.org/cvss/v3-1/specification-document
 6. Package URL (purl) specification — https://github.com/package-url/purl-spec
 7. CSAF / VEX, OASIS — https://oasis-open.github.io/csaf-documentation/
+7a. OpenVEX Specification v0.2.0 — https://github.com/openvex/spec
+7b. EPSS (Exploit Prediction Scoring System), FIRST — https://www.first.org/epss/
+7c. OSV.dev API — https://google.github.io/osv.dev/api/
+7d. Go Vulnerability Database (symbol-level advisory data) — https://vuln.go.dev/
+7e. Anthropic Messages API — https://platform.claude.com/docs/en/api/messages
 8. NIST SP 800-218, Secure Software Development Framework
 9. Executive Order 14028, *Improving the Nation's Cybersecurity* (2021) — the origin of the US SBOM mandate
 10. PEP 440, Version Identification and Dependency Specification
@@ -175,8 +180,10 @@ SARIF fragment for a suppressed finding — visible in CI, not build-breaking:
 | Core dependencies | `cryptography`, `pandas` |
 | Interface dependencies | `fastapi`, `uvicorn`, `pydantic`, `streamlit` |
 | Test dependency | `pytest` |
-| Tests | 56 passing, ~0.3 s |
-| Total Python | ~3,700 lines across 18 files |
+| Tests | 187 pytest + 1 WASM engine test, all passing, ~1 s |
+| Total Python | 6,943 lines across 35 files |
+| Rust / JS | 523 + 433 lines |
+| Optional network | OSV.dev, FIRST EPSS, Anthropic API — each degrades to offline |
 
 ## A7. Pre-submission checklist
 

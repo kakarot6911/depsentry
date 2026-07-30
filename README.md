@@ -125,10 +125,36 @@ numerical blow-up otherwise shows up only as a blank canvas.
 Rust is **optional**: if the wasm is missing, the 3D tab shows a build hint and
 everything else works unchanged.
 
+## Live data (all opt-in, all degrade cleanly)
+
+```bash
+./run.sh scan-live ./myproject          # real OSV.dev advisories + EPSS
+python3 -m depsentry.cli scan . --live --overlay-heuristic
+python3 -m depsentry.cli scan . --remediation-limit 10   # needs ANTHROPIC_API_KEY
+```
+
+| Flag | What it adds |
+|---|---|
+| `--live` | Real advisories from OSV.dev. Falls back to the local corpus if unreachable. |
+| `--cache` | Stores fetched advisories locally for offline reuse. |
+| `--overlay-heuristic` | Supplies symbols for advisories that carry none — see the caveat below. |
+| `--no-epss` | Skips exploit-probability lookup (on by default with `--live`). |
+| `--remediation-limit N` | AI fix guidance for the top N reachable findings. |
+| `--no-llm` / `--no-vex` | Hard off switches. |
+
+⚠ **Measured, and it matters: OSV's PyPI advisories carry no symbol data — 0 of
+171 sampled.** Go's vulndb populates it well; Python's sources do not populate it
+at all. Without the overlay, a live PyPI scan yields only UNKNOWN verdicts and
+reachability contributes nothing. The overlay is a curated *guess*, so it is
+off by default, recorded per finding in `symbol_source`, and reported in the
+coverage summary on every live scan. Full analysis:
+[`docs/05`](docs/05_results_and_discussion.md) §5.5b.
+
 ## Outputs
 
 - **Markdown** — human review, including a full audit trail of suppressions
-- **SARIF 2.1.0** — GitHub code scanning and CI dashboards
+- **SARIF 2.1.0** — with `codeFlows`, so GitHub renders the reachability path natively
+- **OpenVEX 0.2.0** — machine-readable "not affected, and here's why", derived rather than asserted
 - **CycloneDX 1.5** — SBOM interchange, optionally Ed25519-signed
 - **JSON** — programmatic use
 

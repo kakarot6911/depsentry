@@ -192,6 +192,40 @@ build-breaking.
 Fixtures build real project trees on `tmp_path`, so the pipeline is exercised
 against actual files rather than mocks.
 
+## 4.9b Live-data modules (v1.1)
+
+**`osv_client.py`** — batch queries `POST /v1/querybatch` (one round trip per
+100 packages) then fetches full records, de-duplicated because one advisory
+often affects several packages. Two things needed care:
+
+- **OSV ships CVSS *vectors*, not scores.** Rather than add a CVSS library for
+  one calculation, the v3.1 base-score formula is implemented directly and
+  validated against four published reference vectors (9.8 / 7.5 / 7.8 / 4.7) in
+  `test_osv_client.py`.
+- **TLS trust store.** python.org macOS builds ship without a usable CA store,
+  so every HTTPS call failed with `CERTIFICATE_VERIFY_FAILED`. `_ssl_context()`
+  prefers certifi's bundle — verification is never disabled.
+
+**`epss_client.py`** — batches CVE lookups at 100 per request, caches in
+process, and filters non-CVE identifiers before they reach the API (GHSA and
+PYSEC records have no EPSS score by construction).
+
+**`vex.py`** — OpenVEX 0.2.0. One correction to the original specification: the
+justification vocabulary has no `vulnerable_code_not_reachable`. The correct
+term for "code present but never executed" is
+`vulnerable_code_not_in_execute_path`, and justification is only valid on
+`not_affected` statements.
+
+**`remediation.py`** — Anthropic Messages API. Three API details that would
+otherwise silently break:
+
+- `temperature` / `top_p` / `top_k` are **rejected with a 400** on current
+  models; output is steered by prompt alone.
+- Manual `thinking={"type": "enabled", "budget_tokens": N}` is removed; the
+  module uses adaptive thinking at low effort, which suits a short generation.
+- A refusal returns **HTTP 200 with empty content**, so `stop_reason` is checked
+  before indexing `content[0]`.
+
 ## 4.10 Implementation problems and resolutions
 
 | Problem | Symptom | Resolution |
@@ -202,5 +236,7 @@ against actual files rather than mocks.
 | Chained calls unresolved | `foo().bar()` produced no edge | Descend through `ast.Call` to the base receiver |
 | Test code inflating reachability | Symbols used only in tests looked production-reachable | Exclude test directories from the graph |
 | `dist.metadata["License"]` deprecation | 16 warnings on every run | `_license_of()` using `.get()` |
+| HTTPS calls all failed | `CERTIFICATE_VERIFY_FAILED` on every OSV request | certifi CA bundle via `_ssl_context()`; verification never disabled |
+| **UNKNOWN counted as suppressed noise** | First live run printed "noise-cut 100%" while assessing nothing | `noise_reduction()` divides over assessed findings only; console shows a separate `needs-review` count. Invisible under the synthetic corpus, which has no UNKNOWN verdicts — **only live data caught it** |
 
 Each of these is dated in `docs/logbook.md`.

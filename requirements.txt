@@ -16,5 +16,13 @@ pydantic>=2.6.0
 # Dashboard
 streamlit>=1.32.0
 
+# Live advisory + EPSS lookups use urllib (stdlib); certifi supplies a CA
+# bundle because python.org macOS builds ship without a usable trust store.
+certifi>=2024.0.0
+
+# AI remediation (--remediation-limit). Fully optional: without it, and
+# without ANTHROPIC_API_KEY, remediation degrades to a no-op.
+anthropic>=0.40.0
+
 # Tests
 pytest>=8.0.0

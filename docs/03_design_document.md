@@ -176,6 +176,38 @@ surface.
 T5 deserves emphasis: the tool analyses untrusted code. Importing it to inspect
 it would execute it. Everything is done on the AST.
 
+## 3.6b Live-data extensions (v1.1)
+
+Five capabilities added after the initial evaluation. Every one is **opt-in and
+degrades to the v1.0 behaviour** — the default `scan` still makes no network
+call and touches no API key.
+
+| Extension | Module | Design constraint it respects |
+|---|---|---|
+| Live OSV advisories | `osv_client.py` | Falls back to the local corpus if OSV is unreachable. Symbol provenance recorded per finding (`upstream` / `overlay` / `none`) so a curated guess is never presented as upstream fact. |
+| EPSS exploit probability | `epss_client.py` | Multiplier bounded to [0.90, 1.40] so EPSS *modulates* ranking but can never override reachability (G1 would be violated if a probability could resurrect an unreachable finding). |
+| OpenVEX generation | `vex.py` | Every `not_affected` statement is backed by a call-graph result, not a human assertion — this is what makes the justification checkable. |
+| Call-path locations | `callgraph.py` | Evidence becomes a citation: file and line for every hop, encoded as SARIF `codeFlows`. |
+| LLM remediation | `remediation.py` | Static-analysis-only invariant (T5) preserved: source is *read* and confined to the scanned project, never executed. |
+
+### Why EPSS multiplies rather than adds
+
+Same argument as reachability in §3.5, applied one level up. An additive EPSS
+bonus would let a high-probability *unreachable* finding outrank a reachable
+one, reintroducing exactly the ordering error the project exists to correct.
+Bounding the multiplier at 1.40 caps the maximum an unreachable CVSS-10 finding
+can reach at 1.40 — still below any reachable mid-severity finding.
+
+### Why the symbol overlay is opt-in
+
+OSV's PyPI advisories carry no symbol data (measured: 0 of 171 — see
+`docs/05` §5.5b). Without mitigation, live scanning produces only UNKNOWN
+verdicts. The overlay supplies symbols, but attributing a package's dangerous
+API surface to an arbitrary advisory on that package is a **guess**. It is
+therefore off by default (`--overlay-heuristic`), recorded in `symbol_source`,
+and reported in the coverage summary on every live scan. It errs toward
+REACHABLE — a false positive — never toward hiding a finding.
+
 ## 3.7 Key design decisions
 
 | Decision | Alternatives considered | Why this one |

@@ -38,14 +38,16 @@ concepts in use.
 | S1 | **Software Security / Secure Coding** | The entire premise: distinguishing an exploitable defect from an inert one, and reasoning about the vulnerable-symbol boundary between application and dependency code | `src/depsentry/reachability.py` — four-state verdict model with evidence |
 | S2 | **Cryptography & Network Security** | SBOM tamper-evidence via Ed25519 detached signatures with HMAC-SHA256 fallback; append-only audit log as a SHA-256 hash chain; `compare_digest` for timing-safe verification | `src/depsentry/integrity.py`; `tests/test_core.py::TestIntegrity`, `::TestAuditLog` |
 | S3 | **Compiler Design / Program Analysis** | AST parsing, symbol-table construction, import alias resolution, call-graph building, BFS reachability over the graph | `src/depsentry/callgraph.py` — `_ModuleVisitor`, `reachable_external_symbols()` |
-| S4 | **Database Management Systems** | Advisory store schema design in OSV shape; indexing on `(package, ecosystem)`; parameterised queries throughout to prevent injection; version-range predicates | `src/depsentry/vulndb.py` — `_SCHEMA`, `for_package()` |
-| S5 | **Machine Learning / Data Analytics** | Evaluation methodology: confusion matrix, precision/recall/F1, Mean Average Precision for ranking quality, ablation to isolate the causal signal, prevalence-aware interpretation | `experiments/evaluate.py`; `reports/evaluation.json` |
+| S4 | **Database Management Systems** | Advisory store schema in OSV shape; indexing; parameterised queries throughout; version-range predicates; **in-place schema migration** for new columns; SQLite response cache with a content-derived key | `src/depsentry/vulndb.py` — `_SCHEMA`, `_migrate()`; `remediation.py::_Cache` |
+| S5 | **Machine Learning / Data Analytics** | Evaluation methodology: confusion matrix, precision/recall/F1, Mean Average Precision, ablation, prevalence-aware interpretation; **EPSS** exploit-probability fusion as a second empirical signal | `experiments/evaluate.py`; `src/depsentry/epss_client.py`; `risk.py::epss_factor` |
 | S6 | **Web Technologies / Web Application Security** | REST service design; **path-traversal defence** on the scan endpoint (`_safe_path` confines scans to an allow-listed root, returns 403 otherwise); Streamlit dashboard; self-contained WASM delivery with no external asset fetch | `api/main.py`; `dashboard/app.py`; traversal test in the API smoke check |
-| S7 | **DevSecOps / Cloud Security** | Shift-left integration: SARIF 2.1.0 for CI ingestion, non-zero exit code gating via `--fail-on`, unreachable findings demoted to SARIF `note` so they never break a build | `src/depsentry/report.py::to_sarif`; `src/depsentry/cli.py::_cmd_scan` |
+| S7 | **DevSecOps / Cloud Security** | Shift-left integration: SARIF 2.1.0 with `codeFlows`, exit-code gating, unreachable findings demoted to `note`; **OpenVEX 0.2.0** generation for CISA/NTIA/EU-CRA machine-readable exploitability exchange | `report.py::to_sarif`, `_code_flow`; `src/depsentry/vex.py` |
 | S8 | **Research Methodology / Project Management** | Falsifiable hypotheses stated in advance; control and ablation conditions; seeded reproducibility; explicit limitations including a negative result | `docs/01_problem_statement.md` §1.7; `docs/05_results_and_discussion.md` §5–6 |
+| S10 | **Applied AI / API Integration** | Anthropic Messages API for code-specific remediation: prompt construction from advisory + traced path + real source; response caching; graceful degradation; correct handling of removed sampling parameters and the `refusal` stop reason | `src/depsentry/remediation.py`; `tests/test_remediation.py` |
+| S11 | **Network Programming / Web APIs** | Live OSV.dev integration (batch queries, CVSS v3.1 base-score derivation from vectors, TLS trust-store handling); EPSS batched lookups; offline fallback on every path | `src/depsentry/osv_client.py`; `epss_client.py` |
 | S9 | **Systems Programming / Computer Graphics** | Rust compiled to `wasm32-unknown-unknown` via the raw C ABI (no wasm-bindgen); 3D force-directed layout, rotation matrices, perspective projection, painter's-algorithm depth sorting; zero-allocation render loop over shared linear memory | `viz/src/lib.rs`; `viz/shell.html`; headless engine test `viz/smoke.mjs` |
 
-**Coverage check:** 9 subjects, 9+ distinct deliverables, no subject without an
+**Coverage check:** 11 subjects, 11+ distinct deliverables, no subject without an
 artifact. ✔ clause 7 satisfied.
 
 ## 3. Skill–NOS–Project Mapping
@@ -92,7 +94,7 @@ outcome-based education).
 | PO2 | Problem analysis | Alert fatigue traced to its root cause: package-level vs symbol-level matching |
 | PO3 | Design/development of solutions | Six-stage pipeline, three interfaces |
 | PO4 | Conduct investigations | Labelled benchmark, control condition, ablation study |
-| PO5 | Modern tool usage | AST analysis, SQLite, FastAPI, Streamlit, pytest, SARIF, CycloneDX, Rust/WebAssembly |
+| PO5 | Modern tool usage | AST analysis, SQLite, FastAPI, Streamlit, pytest, SARIF, CycloneDX, OpenVEX, Rust/WebAssembly, OSV.dev, EPSS, Anthropic API |
 | PO6 | Engineer and society | Reduces security-review burden; keeps suppression decisions auditable |
 | PO8 | Ethics | Synthetic data disclosed in five separate places rather than passed off as real CVEs |
 | PO9 | Individual and team work | **[FILL]** — `docs/logbook.md` |

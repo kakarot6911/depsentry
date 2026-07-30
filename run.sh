@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # DepSentry driver script.
-#   ./run.sh setup | test | demo | evaluate | scan <path> | viz [path]
+#   ./run.sh setup | test | demo | evaluate | scan <path> | scan-live <path> | viz [path]
 #            | build-viz | dashboard | api | all
 set -euo pipefail
 
@@ -108,6 +108,18 @@ cmd_scan() {
     python3 -m depsentry.cli scan "$target" --out reports "$@"
 }
 
+cmd_scan_live() {
+    if [ $# -lt 1 ]; then
+        echo "usage: ./run.sh scan-live <project-path> [extra args...]" >&2
+        exit 2
+    fi
+    local target="$1"; shift
+    banner "Live scan (OSV.dev + EPSS): $target"
+    echo "  Network required. Falls back to the local corpus if OSV is unreachable."
+    echo
+    python3 -m depsentry.cli scan "$target" --live --cache --out reports/live "$@"
+}
+
 cmd_build_viz() {
     banner "Building Rust 3D engine -> WebAssembly"
     if ! command -v cargo >/dev/null 2>&1; then
@@ -207,14 +219,15 @@ case "${1:-all}" in
     demo)      cmd_demo ;;
     evaluate)  cmd_evaluate ;;
     scan)      shift; cmd_scan "$@" ;;
+    scan-live) shift; cmd_scan_live "$@" ;;
     build-viz) cmd_build_viz ;;
     viz)       shift || true; cmd_viz "$@" ;;
     dashboard) shift || true; cmd_dashboard "$@" ;;
     api)       shift || true; cmd_api "$@" ;;
     all)       cmd_all ;;
     *)
-        echo "usage: ./run.sh {setup|test|demo|evaluate|scan <path>|viz [path]|" >&2
-        echo "                 build-viz|dashboard|api|all}" >&2
+        echo "usage: ./run.sh {setup|test|demo|evaluate|scan <path>|" >&2
+        echo "                 scan-live <path>|viz [path]|build-viz|dashboard|api|all}" >&2
         echo "       dashboard and api accept --network to bind 0.0.0.0" >&2
         exit 2
         ;;
