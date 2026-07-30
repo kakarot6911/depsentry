@@ -29,14 +29,17 @@
   #ds-help kbd{background:#161d31;border:1px solid #232d4a;border-radius:4px;
     padding:1px 5px;color:#b9c6e2;font:inherit;font-size:9.5px}
 
-  #ds-tip{position:absolute;display:none;background:rgba(10,14,26,.95);
+  #ds-tip{position:absolute;display:none;background:rgba(10,14,26,.96);
     border:1px solid #2b3654;border-radius:9px;padding:9px 11px;font-size:11px;
-    pointer-events:none;z-index:9;max-width:290px;box-shadow:0 10px 34px -8px #000}
+    pointer-events:none;z-index:9;max-width:420px;box-shadow:0 10px 34px -8px #000}
   #ds-tip .n{font-weight:700;color:#fff;margin-bottom:5px;font-size:12px;word-break:break-all}
   #ds-tip .m{color:var(--dim);display:flex;justify-content:space-between;gap:14px}
   #ds-tip .m b{color:var(--fg);font-variant-numeric:tabular-nums}
   #ds-tip .tag{display:inline-block;margin-top:6px;padding:1.5px 7px;border-radius:20px;
     font-size:9.5px;font-weight:700;letter-spacing:.07em}
+  #ds-tip .p{margin:8px 0 0;padding:7px 8px;background:#070b16;border:1px solid #1e2740;
+    border-radius:6px;font-size:9.5px;line-height:1.5;color:#c3d2ee;white-space:pre;
+    overflow-x:auto;max-width:100%}
 
   #ds-err{position:absolute;inset:0;display:none;place-items:center;text-align:center;
     padding:30px;color:var(--hot);font-size:12px;line-height:1.7}
@@ -351,7 +354,9 @@
         '<div class="m"><span>depth</span><b>' + (n.direct ? "direct" : "transitive") + "</b></div>" +
         (n.vulns > 0 ? '<div class="m"><span>findings</span><b>' + n.vulns + "</b></div>" : "") +
         (n.risk > 0 ? '<div class="m"><span>max risk</span><b>' + n.risk.toFixed(2) + "</b></div>" : "") +
-        '<div class="tag" style="background:' + bg + ";color:" + fg + '">' + label + "</div>";
+        (n.vuln_id ? '<div class="m"><span>top advisory</span><b>' + esc(n.vuln_id) + "</b></div>" : "") +
+        '<div class="tag" style="background:' + bg + ";color:" + fg + '">' + label + "</div>" +
+        (n.path ? '<pre class="p">' + esc(n.path) + "</pre>" : "");
 
       tip.style.display = "block";
       const tw = tip.offsetWidth, th = tip.offsetHeight;

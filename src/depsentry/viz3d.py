@@ -17,6 +17,7 @@ import base64
 import json
 from pathlib import Path
 
+from .callgraph import render_path_detail
 from .models import Reachability, ScanResult
 
 VIZ_DIR = Path(__file__).resolve().parents[2] / "viz"
@@ -44,12 +45,19 @@ def build_graph(result: ScanResult) -> dict:
     risk: dict[str, float] = {}
     counts: dict[str, int] = {}
     live: set[str] = set()
+    paths: dict[str, str] = {}
+    top_vuln: dict[str, str] = {}
     for f in result.findings:
         name = f.package.name
         counts[name] = counts.get(name, 0) + 1
-        risk[name] = max(risk.get(name, 0.0), f.risk_score)
+        if f.risk_score >= risk.get(name, 0.0):
+            risk[name] = f.risk_score
+            top_vuln[name] = f.vulnerability.vuln_id
         if f.reachability in _LIVE:
             live.add(name)
+            # Keep the shortest traced path as the node's evidence blurb.
+            if f.path_detail and name not in paths:
+                paths[name] = render_path_detail(f.path_detail)
 
     # Index 0 is the synthetic application root.
     nodes: list[dict] = [{
@@ -78,6 +86,8 @@ def build_graph(result: ScanResult) -> dict:
             "kind": kind,
             "risk": round(risk.get(pkg.name, 0.0), 2),
             "vulns": counts.get(pkg.name, 0),
+            "vuln_id": top_vuln.get(pkg.name, ""),
+            "path": paths.get(pkg.name, ""),
         })
 
     # Edges as [a, b, hot]. An edge is hot when it feeds a live node, so the

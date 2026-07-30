@@ -50,6 +50,15 @@ class FunctionNode:
     calls: set[str] = field(default_factory=set)
     is_entrypoint: bool = False
     uses_dynamic_dispatch: bool = False
+    filename: str = ""
+    """Repo-relative path of the file defining this function."""
+
+    call_sites: dict[str, int] = field(default_factory=dict)
+    """target qualname -> line number of the first call to it in this function.
+
+    This is what turns a reachability verdict into a citation: without it the
+    path is a list of names, with it every hop points at a line a reviewer can
+    open."""
 
 
 @dataclass
@@ -73,9 +82,10 @@ class CallGraph:
 class _ModuleVisitor(ast.NodeVisitor):
     """Collects imports, function definitions and call edges for one module."""
 
-    def __init__(self, module: str, graph: CallGraph):
+    def __init__(self, module: str, graph: CallGraph, filename: str = ""):
         self.module = module
         self.graph = graph
+        self.filename = filename
         self.imports: dict[str, str] = {}
         self._scope: list[str] = []
         self._current: FunctionNode | None = None
@@ -123,6 +133,7 @@ class _ModuleVisitor(ast.NodeVisitor):
             name=node.name,
             lineno=node.lineno,
             is_entrypoint=self._is_entrypoint(node),
+            filename=self.filename,
         )
         self.graph.nodes[qualname] = fn
 
@@ -162,12 +173,15 @@ class _ModuleVisitor(ast.NodeVisitor):
                     self._current.uses_dynamic_dispatch = True
             elif self._current:
                 self._current.calls.add(target)
+                # First call site wins: it is the earliest evidence in the file.
+                self._current.call_sites.setdefault(target, node.lineno)
                 self.graph.edges[self._current.qualname].add(target)
             else:
                 # Module-level call: attribute it to a synthetic module node so
                 # import-time side effects are not lost.
                 module_node = self._module_level_node()
                 module_node.calls.add(target)
+                module_node.call_sites.setdefault(target, node.lineno)
                 self.graph.edges[module_node.qualname].add(target)
         self.generic_visit(node)
 
@@ -181,6 +195,7 @@ class _ModuleVisitor(ast.NodeVisitor):
                 name="<module>",
                 lineno=0,
                 is_entrypoint=True,  # import-time code always executes
+                filename=self.filename,
             )
             self.graph.nodes[qualname] = node
         return node
@@ -244,7 +259,7 @@ def build_call_graph(
             continue
 
         module = ".".join(rel.with_suffix("").parts)
-        _ModuleVisitor(module, graph).visit(tree)
+        _ModuleVisitor(module, graph, filename=str(rel)).visit(tree)
 
     _mark_orphan_entrypoints(graph)
     return graph
@@ -315,3 +330,87 @@ def reachable_external_symbols(
                     results[target].append((entry, path))
 
     return dict(results)
+
+
+def path_detail(
+    graph: CallGraph,
+    entrypoint: str,
+    steps: tuple[str, ...],
+    target_symbol: str,
+) -> list[dict]:
+    """Resolve a reachability path into hops carrying file and line locations.
+
+    Turns `main -> load_config -> yaml.load` into something a reviewer can
+    open: each hop names the file, the line the function is defined on, and
+    the line where it calls the next hop.
+
+    The final entry is the external vulnerable symbol, which has no location in
+    project source and is marked `external`.
+    """
+    chain = [entrypoint, *steps]
+    detail: list[dict] = []
+
+    for i, qualname in enumerate(chain):
+        node = graph.nodes.get(qualname)
+        next_hop = chain[i + 1] if i + 1 < len(chain) else target_symbol
+
+        call_line = node.call_sites.get(next_hop) if node else None
+        if node is not None and call_line is None:
+            # Internal calls are often recorded under a bare or differently
+            # qualified name than the resolved node id; fall back to matching
+            # on the final attribute.
+            wanted = next_hop.rsplit(".", 1)[-1]
+            for recorded, line in node.call_sites.items():
+                if recorded == wanted or recorded.rsplit(".", 1)[-1] == wanted:
+                    call_line = line
+                    break
+
+        detail.append({
+            "function": qualname,
+            "file": node.filename if node else "<external>",
+            "line": node.lineno if node else None,
+            "call_line": call_line,
+            "external": node is None,
+        })
+
+    detail.append({
+        "function": target_symbol,
+        "file": "<external>",
+        "line": None,
+        "call_line": None,
+        "external": True,
+    })
+    return detail
+
+
+def render_path_detail(detail: list[dict]) -> str:
+    """Format a detailed path as an indented, copy-pasteable chain."""
+    if not detail:
+        return ""
+
+    lines: list[str] = []
+    for i, hop in enumerate(detail):
+        location = (
+            f"{hop['file']}:{hop['line']}"
+            if hop["line"] is not None
+            else hop["function"]
+        )
+        marker = " [VULNERABLE]" if i == len(detail) - 1 else ""
+
+        if i == 0:
+            lines.append(f"{location} {hop['function']}(){marker}")
+        else:
+            indent = "  " * i
+            previous_call = detail[i - 1].get("call_line")
+            arrow = (
+                f"{indent}└─ calls at line {previous_call} ──▶ "
+                if previous_call
+                else f"{indent}└─ calls ──▶ "
+            )
+            label = (
+                f"{location} {hop['function']}()"
+                if hop["line"] is not None
+                else hop["function"]
+            )
+            lines.append(f"{arrow}{label}{marker}")
+    return "\n".join(lines)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .callgraph import CallGraph, reachable_external_symbols
+from .callgraph import CallGraph, path_detail, reachable_external_symbols
 from .models import CallPath, Reachability, Vulnerability
 
 
@@ -146,6 +146,7 @@ class ReachabilityAnalyzer:
                             steps=steps,
                             target_symbol=reached,
                             confidence=1.0 if reached == symbol else 0.8,
+                            detail=path_detail(self.graph, entrypoint, steps, reached),
                         )
                     )
 

@@ -176,6 +176,8 @@ class CallPath:
     steps: tuple[str, ...]
     target_symbol: str
     confidence: float = 1.0
+    detail: list[dict] = field(default_factory=list)
+    """Per-hop file/line locations; populated by the reachability analyzer."""
 
     def render(self) -> str:
         return " -> ".join([self.entrypoint, *self.steps, self.target_symbol])

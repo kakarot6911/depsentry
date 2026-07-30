@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import Reachability, ScanResult
+from .callgraph import render_path_detail
+from .models import Finding, Reachability, ScanResult
 
 _SEVERITY_ICON = {
     "CRITICAL": "[CRIT]",
@@ -75,6 +76,25 @@ def to_markdown(result: ScanResult) -> str:
                 lines += ["**Evidence (call paths):**", "", "```"]
                 lines += [f"  {p.render()}" for p in f.call_paths[:3]]
                 lines += ["```", ""]
+
+            if f.path_detail:
+                lines += [
+                    "**Traced path with source locations:**", "", "```text",
+                    render_path_detail(f.path_detail), "```", "",
+                ]
+
+            if f.epss:
+                lines += [
+                    f"- **EPSS**: {f.epss.probability:.2%} probability of "
+                    f"exploitation in 30 days ({f.epss.band}, "
+                    f"{f.epss.percentile:.1%} percentile)",
+                    "",
+                ]
+
+            if f.remediation_advice:
+                lines += [
+                    "**Suggested fix:**", "", f.remediation_advice, "",
+                ]
             lines += ["<details><summary>Scoring rationale</summary>", ""]
             lines += [f"- {r}" for r in f.rationale]
             lines += ["", "</details>", ""]
@@ -99,6 +119,44 @@ def to_markdown(result: ScanResult) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _code_flow(finding: Finding) -> dict | None:
+    """Encode a traced call path as a SARIF threadFlow.
+
+    SARIF 2.1.0 models exactly this: an ordered sequence of locations showing
+    how execution arrives somewhere. Emitting it means GitHub's code scanning
+    UI renders DepSentry's reachability evidence without any custom viewer.
+    """
+    if not finding.path_detail:
+        return None
+
+    locations = []
+    for i, hop in enumerate(finding.path_detail):
+        nxt = (
+            finding.path_detail[i + 1]["function"]
+            if i + 1 < len(finding.path_detail)
+            else None
+        )
+        line = hop.get("call_line") or hop.get("line") or 1
+        uri = hop["file"] if not hop.get("external") else "requirements.txt"
+        text = (
+            f"{hop['function']}() calls {nxt}()"
+            if nxt
+            else f"{hop['function']} -- vulnerable symbol"
+        )
+        locations.append({
+            "location": {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": uri},
+                    "region": {"startLine": int(line)},
+                },
+                "message": {"text": text},
+            },
+            "nestingLevel": i,
+        })
+
+    return {"threadFlows": [{"locations": locations}]}
 
 
 def to_sarif(result: ScanResult) -> dict:
@@ -137,7 +195,7 @@ def to_sarif(result: ScanResult) -> dict:
         if f.call_paths:
             message += f" Evidence: {f.call_paths[0].render()}"
 
-        results.append({
+        entry = {
             "ruleId": v.vuln_id,
             "level": level,
             "message": {"text": message},
@@ -151,8 +209,28 @@ def to_sarif(result: ScanResult) -> dict:
                 "reachability": f.reachability.value,
                 "riskScore": round(f.risk_score, 2),
                 "actionable": f.actionable,
+                "symbolSource": v.symbol_source,
+                **({"cveId": v.cve_id} if v.cve_id else {}),
+                **(
+                    {
+                        "epssProbability": round(f.epss.probability, 6),
+                        "epssPercentile": round(f.epss.percentile, 6),
+                    }
+                    if f.epss
+                    else {}
+                ),
             },
-        })
+        }
+
+        # codeFlows renders the reachability path natively in GitHub code
+        # scanning, so the evidence travels with the finding.
+        flow = _code_flow(f)
+        if flow:
+            entry["codeFlows"] = [flow]
+        if f.remediation_advice:
+            entry["fixes"] = [{"description": {"text": f.remediation_advice}}]
+
+        results.append(entry)
 
     return {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",

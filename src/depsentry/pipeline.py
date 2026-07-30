@@ -109,6 +109,8 @@ def scan_project(
                 reachability=verdict.status,
                 call_paths=verdict.call_paths,
                 rationale=[verdict.reason],
+                # Shortest path is the clearest evidence; surface its locations.
+                path_detail=verdict.call_paths[0].detail if verdict.call_paths else [],
             )
         )
 

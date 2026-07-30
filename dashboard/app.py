@@ -21,6 +21,7 @@ import streamlit.components.v1 as components
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from depsentry.callgraph import render_path_detail  # noqa: E402
 from depsentry.pipeline import scan_project  # noqa: E402
 from depsentry.report import to_markdown  # noqa: E402
 from depsentry.vulndb import DEFAULT_DB, VulnerabilityDB  # noqa: E402
@@ -58,6 +59,79 @@ def _load_advisories() -> pd.DataFrame:
             for a in db.all_advisories()
         ]
     return pd.DataFrame(rows)
+
+
+def _source_window(project_root: str, rel_file: str, line: int, radius: int = 2) -> str | None:
+    """Read a small window of source around a call site.
+
+    Path is resolved and confined to the scanned project, so a crafted
+    path_detail entry cannot make the dashboard read arbitrary files.
+    """
+    try:
+        root = Path(project_root).expanduser().resolve()
+        target = (root / rel_file).resolve()
+        target.relative_to(root)
+        if not target.is_file():
+            return None
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return None
+
+    start = max(0, line - radius - 1)
+    end = min(len(lines), line + radius)
+    return "\n".join(
+        f"{n + 1:>4} {'>' if n + 1 == line else ' '} {lines[n]}"
+        for n in range(start, end)
+    )
+
+
+def _call_path_inspector(detail: list[dict], project_root: str) -> None:
+    """Render a traced call path as a chain with source windows.
+
+    This is the "show me the proof" view: every hop names a file and line, and
+    the actual source at each call site is displayed inline.
+    """
+    st.markdown("**Call Path Inspector**")
+
+    for i, hop in enumerate(detail):
+        is_last = i == len(detail) - 1
+        is_first = i == 0
+
+        if is_first:
+            badge, colour = "ENTRYPOINT", "#15803d"
+        elif is_last:
+            badge, colour = "VULNERABLE", "#b91c1c"
+        else:
+            badge, colour = f"HOP {i}", "#475569"
+
+        location = (
+            f"{hop['file']}:{hop['line']}" if hop.get("line") is not None else "external"
+        )
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:10px;margin:2px 0'>"
+            f"<span style='background:{colour};color:#fff;padding:1px 8px;"
+            f"border-radius:10px;font-size:10px;font-weight:700'>{badge}</span>"
+            f"<code>{hop['function']}</code>"
+            f"<span style='color:#64748b;font-size:11px'>{location}</span></div>",
+            unsafe_allow_html=True,
+        )
+
+        if hop.get("call_line") and not hop.get("external"):
+            window = _source_window(project_root, hop["file"], hop["call_line"])
+            if window:
+                st.code(window, language="python")
+            st.markdown(
+                f"<div style='color:#64748b;font-size:11px;margin-left:14px'>"
+                f"↓ calls at line {hop['call_line']}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.text_area(
+        "Copy path as text",
+        render_path_detail(detail),
+        height=110,
+        key=f"path_{hash(str(detail))}",
+    )
 
 
 def _discover_projects() -> list[str]:
@@ -190,6 +264,22 @@ with tab_scan:
                         if f["call_paths"]:
                             st.markdown("**Call paths**")
                             st.code("\n".join(f["call_paths"]), language="text")
+
+                        if f.get("path_detail"):
+                            _call_path_inspector(f["path_detail"], path)
+
+                        if f.get("epss"):
+                            e = f["epss"]
+                            st.markdown(
+                                f"**EPSS** — {e['probability']:.2%} chance of "
+                                f"exploitation in 30 days · **{e['band']}** · "
+                                f"{e['percentile']:.1%} percentile"
+                            )
+
+                        if f.get("remediation_advice"):
+                            st.markdown("**Suggested fix**")
+                            st.info(f["remediation_advice"])
+
                         st.markdown("**Rationale**")
                         for line in f["rationale"]:
                             st.markdown(f"- {line}")
@@ -210,11 +300,28 @@ with tab_scan:
                     else:
                         st.write("Nothing suppressed.")
 
-                st.download_button(
-                    "Download Markdown report",
-                    to_markdown(scan_project(path)),
-                    file_name=f"{data['project']}_report.md",
-                )
+                dl1, dl2 = st.columns(2)
+                with dl1:
+                    st.download_button(
+                        "Download Markdown report",
+                        to_markdown(scan_project(path)),
+                        file_name=f"{data['project']}_report.md",
+                        use_container_width=True,
+                    )
+                with dl2:
+                    from depsentry.vex import render_vex, vex_summary
+
+                    scan = scan_project(path)
+                    counts = vex_summary(scan)
+                    st.download_button(
+                        f"Export VEX  ({counts['not_affected']} not-affected)",
+                        render_vex(scan),
+                        file_name="vex.json",
+                        mime="application/json",
+                        use_container_width=True,
+                        help="OpenVEX 0.2.0 -- machine-readable "
+                             "'not affected, and here is why' for your security team.",
+                    )
 
 
 with tab_bench:
