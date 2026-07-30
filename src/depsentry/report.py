@@ -169,8 +169,13 @@ def to_sarif(result: ScanResult) -> dict:
     }
 
 
-def write_reports(result: ScanResult, out_dir: str | Path) -> dict[str, Path]:
-    """Write markdown, JSON, SARIF and the CycloneDX SBOM. Returns the paths."""
+def write_reports(
+    result: ScanResult, out_dir: str | Path, *, vex: bool = True
+) -> dict[str, Path]:
+    """Write markdown, JSON, SARIF, VEX and the CycloneDX SBOM.
+
+    Returns a mapping of format name to written path.
+    """
     directory = Path(out_dir).expanduser()
     directory.mkdir(parents=True, exist_ok=True)
     slug = result.project
@@ -185,6 +190,12 @@ def write_reports(result: ScanResult, out_dir: str | Path) -> dict[str, Path]:
     paths["markdown"].write_text(to_markdown(result), encoding="utf-8")
     paths["json"].write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
     paths["sarif"].write_text(json.dumps(to_sarif(result), indent=2), encoding="utf-8")
+
+    if vex:
+        from .vex import render_vex
+
+        paths["vex"] = directory / "vex.json"
+        paths["vex"].write_text(render_vex(result), encoding="utf-8")
 
     sbom_doc = result.sbom.to_cyclonedx()
     if result.sbom.signature:
