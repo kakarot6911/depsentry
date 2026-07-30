@@ -1,0 +1,371 @@
+<div id="ds-root">
+<style>
+  #ds-root{--bg:#05070f;--fg:#e8eefc;--dim:#7e8ba8;--hot:#ff5a3c;--warn:#e0a83a;--cool:#4d7fb8;--ok:#5be0c8;
+    position:relative;width:100%;height:__HEIGHT__px;margin:0;overflow:hidden;border-radius:14px;
+    background:var(--bg);color:var(--fg);
+    font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    box-shadow:0 0 0 1px #1b2338, 0 18px 60px -20px #000;}
+  #ds-root *{box-sizing:border-box}
+  #ds-canvas{display:block;width:100%;height:100%;cursor:grab}
+  #ds-canvas.drag{cursor:grabbing}
+
+  .ds-panel{position:absolute;background:rgba(9,13,25,.74);border:1px solid #1e2740;
+    border-radius:10px;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    padding:11px 13px;font-size:11px;line-height:1.55;pointer-events:none}
+
+  #ds-hud{top:14px;left:14px;min-width:212px}
+  #ds-hud .t{font-size:12.5px;font-weight:700;letter-spacing:.10em;color:#fff;margin-bottom:8px}
+  #ds-hud .t small{display:block;font-weight:400;letter-spacing:.04em;color:var(--dim);font-size:10px;margin-top:3px}
+  .ds-row{display:flex;justify-content:space-between;gap:16px;padding:2px 0}
+  .ds-row span:first-child{color:var(--dim)}
+  .ds-row b{font-variant-numeric:tabular-nums;font-weight:600}
+  .ds-sep{height:1px;background:#1e2740;margin:8px 0}
+
+  #ds-legend{bottom:14px;left:14px}
+  .ds-key{display:flex;align-items:center;gap:8px;padding:2.5px 0;color:var(--dim)}
+  .ds-dot{width:9px;height:9px;border-radius:50%;flex:none}
+
+  #ds-help{bottom:14px;right:14px;text-align:right;color:var(--dim);font-size:10px}
+  #ds-help kbd{background:#161d31;border:1px solid #232d4a;border-radius:4px;
+    padding:1px 5px;color:#b9c6e2;font:inherit;font-size:9.5px}
+
+  #ds-tip{position:absolute;display:none;background:rgba(10,14,26,.95);
+    border:1px solid #2b3654;border-radius:9px;padding:9px 11px;font-size:11px;
+    pointer-events:none;z-index:9;max-width:290px;box-shadow:0 10px 34px -8px #000}
+  #ds-tip .n{font-weight:700;color:#fff;margin-bottom:5px;font-size:12px;word-break:break-all}
+  #ds-tip .m{color:var(--dim);display:flex;justify-content:space-between;gap:14px}
+  #ds-tip .m b{color:var(--fg);font-variant-numeric:tabular-nums}
+  #ds-tip .tag{display:inline-block;margin-top:6px;padding:1.5px 7px;border-radius:20px;
+    font-size:9.5px;font-weight:700;letter-spacing:.07em}
+
+  #ds-err{position:absolute;inset:0;display:none;place-items:center;text-align:center;
+    padding:30px;color:var(--hot);font-size:12px;line-height:1.7}
+</style>
+
+<canvas id="ds-canvas"></canvas>
+
+<div class="ds-panel" id="ds-hud">
+  <div class="t">DEPSENTRY · ATTACK SURFACE<small id="ds-proj">—</small></div>
+  <div class="ds-row"><span>packages</span><b id="ds-k-pkg">0</b></div>
+  <div class="ds-row"><span>findings</span><b id="ds-k-find">0</b></div>
+  <div class="ds-row"><span style="color:var(--hot)">reachable</span><b id="ds-k-reach" style="color:var(--hot)">0</b></div>
+  <div class="ds-row"><span>suppressed</span><b id="ds-k-supp">0</b></div>
+  <div class="ds-sep"></div>
+  <div class="ds-row"><span>noise cut</span><b id="ds-k-noise" style="color:var(--ok)">0%</b></div>
+  <div class="ds-row"><span>engine</span><b style="color:#d9884a">rust/wasm</b></div>
+  <div class="ds-row"><span>fps</span><b id="ds-k-fps">—</b></div>
+</div>
+
+<div class="ds-panel" id="ds-legend">
+  <div class="ds-key"><i class="ds-dot" style="background:#9ef0ff;box-shadow:0 0 9px #9ef0ff"></i>application root</div>
+  <div class="ds-key"><i class="ds-dot" style="background:#ff4a2a;box-shadow:0 0 11px #ff4a2a"></i>reachable — exploitable path</div>
+  <div class="ds-key"><i class="ds-dot" style="background:#9e8c4d"></i>vulnerable — unreachable</div>
+  <div class="ds-key"><i class="ds-dot" style="background:#54708f"></i>clean dependency</div>
+</div>
+
+<div class="ds-panel" id="ds-help">
+  <kbd>drag</kbd> rotate &nbsp; <kbd>scroll</kbd> zoom &nbsp; <kbd>double-click</kbd> reset
+</div>
+
+<div id="ds-tip"></div>
+<div id="ds-err"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const GRAPH = __GRAPH_DATA__;
+  const WASM_B64 = "__WASM_B64__";
+
+  const root   = document.getElementById("ds-root");
+  const canvas = document.getElementById("ds-canvas");
+  const ctx    = canvas.getContext("2d", { alpha: false });
+  const tip    = document.getElementById("ds-tip");
+  const errBox = document.getElementById("ds-err");
+
+  const fail = (msg) => {
+    errBox.style.display = "grid";
+    errBox.textContent = "3D engine failed to start — " + msg;
+  };
+
+  // --- camera / interaction state -----------------------------------------
+  let yaw = 0.6, pitch = -0.24, zoom = 1.0;
+  let dragging = false, lastX = 0, lastY = 0;
+  let spin = true;                      // auto-rotate until the user takes over
+  let mouseX = -1e5, mouseY = -1e5;
+  let dpr = 1, W = 0, H = 0;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const r = root.getBoundingClientRect();
+    W = Math.max(r.width, 1);
+    H = Math.max(r.height, 1);
+    canvas.width  = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  canvas.addEventListener("mousedown", (e) => {
+    dragging = true; spin = false;
+    lastX = e.clientX; lastY = e.clientY;
+    canvas.classList.add("drag");
+  });
+  window.addEventListener("mouseup", () => {
+    dragging = false; canvas.classList.remove("drag");
+  });
+  window.addEventListener("mousemove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    mouseX = e.clientX - r.left;
+    mouseY = e.clientY - r.top;
+    if (!dragging) return;
+    yaw   += (e.clientX - lastX) * 0.0072;
+    pitch += (e.clientY - lastY) * 0.0072;
+    pitch = Math.max(-1.45, Math.min(1.45, pitch));
+    lastX = e.clientX; lastY = e.clientY;
+  });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    zoom = Math.max(0.35, Math.min(3.6, zoom * (e.deltaY > 0 ? 0.92 : 1.087)));
+  }, { passive: false });
+  canvas.addEventListener("dblclick", () => {
+    yaw = 0.6; pitch = -0.24; zoom = 1.0; spin = true;
+  });
+  canvas.addEventListener("mouseleave", () => { mouseX = mouseY = -1e5; });
+
+  // --- starfield backdrop --------------------------------------------------
+  const STARS = Array.from({ length: 150 }, () => ({
+    x: Math.random(), y: Math.random(),
+    r: Math.random() * 1.05 + 0.25,
+    a: Math.random() * 0.4 + 0.08,
+    tw: Math.random() * 6.28
+  }));
+
+  function drawBackdrop(t) {
+    const g = ctx.createRadialGradient(W * 0.5, H * 0.46, 0, W * 0.5, H * 0.46, Math.max(W, H) * 0.78);
+    g.addColorStop(0, "#0b1120");
+    g.addColorStop(0.55, "#070a14");
+    g.addColorStop(1, "#03040a");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    for (const s of STARS) {
+      ctx.globalAlpha = s.a * (0.55 + 0.45 * Math.sin(t * 0.9 + s.tw));
+      ctx.fillStyle = "#9fb4dd";
+      ctx.beginPath();
+      ctx.arc(s.x * W, s.y * H, s.r, 0, 6.2832);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // --- wasm bootstrap ------------------------------------------------------
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  WebAssembly.instantiate(b64ToBytes(WASM_B64), {})
+    .then(({ instance }) => start(instance.exports))
+    .catch((e) => fail(String(e)));
+
+  function start(wasm) {
+    const nodes = GRAPH.nodes, edges = GRAPH.edges;
+
+    wasm.graph_new(nodes.length, edges.length, 0x5EED);
+    nodes.forEach((n, i) => wasm.set_node(i, n.kind, n.risk, n.vulns));
+    edges.forEach((e) => wasm.add_edge(e[0], e[1], e[2]));
+
+    const NS = wasm.node_stride(), ES = wasm.edge_stride();
+    const mem = wasm.memory.buffer;
+    // Buffers are allocated once in Rust and never reallocated, so these views
+    // remain valid for the lifetime of the scene.
+    const nodeBuf  = new Float32Array(mem, wasm.nodes_ptr(),  nodes.length * NS);
+    const edgeBuf  = new Float32Array(mem, wasm.edges_ptr(),  Math.max(edges.length, 1) * ES);
+    const orderBuf = new Uint32Array (mem, wasm.order_ptr(),  nodes.length);
+
+    // HUD
+    const S = GRAPH.stats;
+    document.getElementById("ds-proj").textContent   = GRAPH.project;
+    document.getElementById("ds-k-pkg").textContent  = S.packages;
+    document.getElementById("ds-k-find").textContent = S.findings;
+    document.getElementById("ds-k-reach").textContent= S.reachable;
+    document.getElementById("ds-k-supp").textContent = S.suppressed;
+    document.getElementById("ds-k-noise").textContent= S.noise + "%";
+
+    const fpsEl = document.getElementById("ds-k-fps");
+    let last = performance.now(), acc = 0, frames = 0, t0 = last;
+
+    function frame(now) {
+      const dtms = Math.min(now - last, 60);
+      last = now;
+      const t = (now - t0) / 1000;
+      if (spin) yaw += dtms * 0.00013;
+
+      resizeIfNeeded();
+      wasm.step(dtms / 16.667, yaw, pitch, zoom, W, H, t, mouseX, mouseY);
+
+      drawBackdrop(t);
+      drawEdges();
+      drawNodes();
+      updateTooltip(wasm.hovered());
+
+      acc += dtms; frames++;
+      if (acc >= 500) { fpsEl.textContent = Math.round(frames * 1000 / acc); acc = 0; frames = 0; }
+      requestAnimationFrame(frame);
+    }
+
+    let lastW = -1, lastH = -1;
+    function resizeIfNeeded() {
+      const r = root.getBoundingClientRect();
+      if (Math.abs(r.width - lastW) > 0.5 || Math.abs(r.height - lastH) > 0.5) {
+        lastW = r.width; lastH = r.height; resize();
+      }
+    }
+
+    function drawEdges() {
+      ctx.lineCap = "round";
+
+      // Cold structural edges first, as a single dim pass.
+      ctx.globalCompositeOperation = "source-over";
+      ctx.beginPath();
+      for (let k = 0; k < edges.length; k++) {
+        const o = k * ES;
+        if (edgeBuf[o + 6] === 1) continue;
+        ctx.moveTo(edgeBuf[o], edgeBuf[o + 1]);
+        ctx.lineTo(edgeBuf[o + 2], edgeBuf[o + 3]);
+      }
+      ctx.strokeStyle = "rgba(96,124,168,0.16)";
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+
+      // Hot attack paths, additively blended so crossings bloom.
+      ctx.globalCompositeOperation = "lighter";
+      for (let k = 0; k < edges.length; k++) {
+        const o = k * ES;
+        if (edgeBuf[o + 6] !== 1) continue;
+        const x1 = edgeBuf[o], y1 = edgeBuf[o + 1];
+        const x2 = edgeBuf[o + 2], y2 = edgeBuf[o + 3];
+        const a  = edgeBuf[o + 5], w = edgeBuf[o + 7];
+
+        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+        grad.addColorStop(0,   "rgba(255,110,60," + (a * 0.30).toFixed(3) + ")");
+        grad.addColorStop(0.5, "rgba(255,72,38,"  + a.toFixed(3) + ")");
+        grad.addColorStop(1,   "rgba(255,150,70," + (a * 0.55).toFixed(3) + ")");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    function drawNodes() {
+      const hov = wasm.hovered();
+
+      // Pass 1 — additive glow halos, painter-ordered back to front.
+      ctx.globalCompositeOperation = "lighter";
+      for (let idx = 0; idx < nodes.length; idx++) {
+        const i = orderBuf[idx], o = i * NS;
+        const x = nodeBuf[o], y = nodeBuf[o + 1], rad = nodeBuf[o + 2];
+        const r = nodeBuf[o + 4], g = nodeBuf[o + 5], b = nodeBuf[o + 6];
+        const glow = nodeBuf[o + 7], pulse = nodeBuf[o + 8];
+        if (glow < 0.02) continue;
+
+        const R = rad * (2.9 + pulse * 1.5);
+        const col = (r * 255 | 0) + "," + (g * 255 | 0) + "," + (b * 255 | 0);
+        const gr = ctx.createRadialGradient(x, y, 0, x, y, R);
+        gr.addColorStop(0,    "rgba(" + col + "," + (glow * 0.55).toFixed(3) + ")");
+        gr.addColorStop(0.35, "rgba(" + col + "," + (glow * 0.17).toFixed(3) + ")");
+        gr.addColorStop(1,    "rgba(" + col + ",0)");
+        ctx.fillStyle = gr;
+        ctx.beginPath();
+        ctx.arc(x, y, R, 0, 6.2832);
+        ctx.fill();
+      }
+
+      // Pass 2 — solid cores, rims, pulse rings.
+      ctx.globalCompositeOperation = "source-over";
+      for (let idx = 0; idx < nodes.length; idx++) {
+        const i = orderBuf[idx], o = i * NS;
+        const x = nodeBuf[o], y = nodeBuf[o + 1], rad = nodeBuf[o + 2];
+        const depth = nodeBuf[o + 3];
+        const r = nodeBuf[o + 4], g = nodeBuf[o + 5], b = nodeBuf[o + 6];
+        const pulse = nodeBuf[o + 8];
+        const lit = 0.45 + 0.55 * depth;
+        const col = (r * 255 * lit | 0) + "," + (g * 255 * lit | 0) + "," + (b * 255 * lit | 0);
+
+        // Expanding shockwave ring on live threats.
+        if (pulse > 0.01 && nodes[i].kind === 3) {
+          const rr = rad * (1.5 + pulse * 2.4);
+          ctx.strokeStyle = "rgba(255,96,54," + (0.42 * (1 - pulse)).toFixed(3) + ")";
+          ctx.lineWidth = 1.3;
+          ctx.beginPath();
+          ctx.arc(x, y, rr, 0, 6.2832);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "rgb(" + col + ")";
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, 6.2832);
+        ctx.fill();
+
+        // Specular highlight sells the sphere.
+        const hg = ctx.createRadialGradient(x - rad * .35, y - rad * .38, 0, x, y, rad);
+        hg.addColorStop(0, "rgba(255,255,255,.42)");
+        hg.addColorStop(0.55, "rgba(255,255,255,0)");
+        ctx.fillStyle = hg;
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, 6.2832);
+        ctx.fill();
+
+        if (i === hov) {
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(x, y, rad + 4.5, 0, 6.2832);
+          ctx.stroke();
+        }
+      }
+    }
+
+    const TAGS = {
+      0: ["ROOT",        "#0d3b47", "#7fe6ff"],
+      1: ["CLEAN",       "#16233a", "#8fa8cc"],
+      2: ["UNREACHABLE", "#3a3113", "#e0b755"],
+      3: ["REACHABLE",   "#4a1508", "#ff8a63"]
+    };
+
+    function updateTooltip(hov) {
+      if (hov < 0 || hov >= nodes.length) { tip.style.display = "none"; return; }
+      const n = nodes[hov], o = hov * NS;
+      const [label, bg, fg] = TAGS[n.kind] || TAGS[1];
+
+      tip.innerHTML =
+        '<div class="n">' + esc(n.name) + "</div>" +
+        (n.version ? '<div class="m"><span>version</span><b>' + esc(n.version) + "</b></div>" : "") +
+        '<div class="m"><span>depth</span><b>' + (n.direct ? "direct" : "transitive") + "</b></div>" +
+        (n.vulns > 0 ? '<div class="m"><span>findings</span><b>' + n.vulns + "</b></div>" : "") +
+        (n.risk > 0 ? '<div class="m"><span>max risk</span><b>' + n.risk.toFixed(2) + "</b></div>" : "") +
+        '<div class="tag" style="background:' + bg + ";color:" + fg + '">' + label + "</div>";
+
+      tip.style.display = "block";
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let tx = nodeBuf[o] + 18, ty = nodeBuf[o + 1] - th / 2;
+      if (tx + tw > W - 8) tx = nodeBuf[o] - tw - 18;
+      tip.style.left = Math.max(8, Math.min(tx, W - tw - 8)) + "px";
+      tip.style.top  = Math.max(8, Math.min(ty, H - th - 8)) + "px";
+    }
+
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+    resize();
+    requestAnimationFrame(frame);
+  }
+})();
+</script>

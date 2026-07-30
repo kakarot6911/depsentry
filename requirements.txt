@@ -1,0 +1,20 @@
+# DepSentry dependencies
+# Core analysis (sbom, vulndb, callgraph, reachability, risk) is stdlib-only.
+
+# Cryptography: Ed25519 SBOM signing. Optional -- integrity.py falls back to
+# HMAC-SHA256 if unavailable.
+cryptography>=42.0.0
+
+# Evaluation and dashboard tabulation
+pandas>=2.0.0
+
+# REST API
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.6.0
+
+# Dashboard
+streamlit>=1.32.0
+
+# Tests
+pytest>=8.0.0

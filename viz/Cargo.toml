@@ -1,0 +1,15 @@
+[package]
+name    = "depsentry-viz"
+version = "1.0.0"
+edition = "2021"
+description = "3D force-directed dependency graph engine for DepSentry, compiled to WebAssembly."
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level     = "z"      # optimise for size; this ships over the wire
+lto           = true
+panic         = "abort"  # no unwinding tables in wasm
+codegen-units = 1
+strip         = true
