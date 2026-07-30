@@ -286,6 +286,7 @@ def write_reports(
 def console_summary(result: ScanResult) -> str:
     """Compact terminal output for the CLI."""
     actionable = result.actionable_findings
+    unknown = result.unknown_findings
     lines = [
         "",
         f"  DepSentry  |  {result.project}",
@@ -293,12 +294,24 @@ def console_summary(result: ScanResult) -> str:
         f"  packages {len(result.sbom.packages):<4} "
         f"findings {len(result.findings):<4} "
         f"actionable {len(actionable):<4} "
+        f"needs-review {len(unknown):<4} "
         f"noise-cut {result.noise_reduction():.0%}",
         f"  {'-' * 62}",
     ]
 
+    if unknown:
+        lines += [
+            f"  {len(unknown)} finding(s) could NOT be assessed: the advisory names no",
+            "  affected symbol, so reachability is undetermined. These are not",
+            "  suppressed -- they need manual review.",
+            "",
+        ]
+
     if not actionable:
-        lines += ["  No actionable findings. All matches are unreachable.", ""]
+        if len(unknown) == len(result.findings) and unknown:
+            lines += ["  No finding was assessable; nothing was suppressed.", ""]
+        else:
+            lines += ["  No actionable findings. All assessed matches are unreachable.", ""]
         return "\n".join(lines)
 
     for f in actionable[:15]:

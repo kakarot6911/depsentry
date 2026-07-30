@@ -326,15 +326,37 @@ class ScanResult:
     def actionable_findings(self) -> list[Finding]:
         return [f for f in self.findings if f.actionable]
 
-    def noise_reduction(self) -> float:
-        """Fraction of raw findings suppressed as non-actionable.
+    @property
+    def unknown_findings(self) -> list[Finding]:
+        """Findings the analysis could not assess -- advisory named no symbol.
 
-        This is the headline metric: how much of the alert pile a developer no
-        longer has to read.
+        These are NOT suppressed noise. They are unassessed, and a developer
+        still has to look at them. Live OSV data makes this the common case for
+        PyPI, where advisories carry no symbol data at all.
         """
-        if not self.findings:
+        return [f for f in self.findings if f.reachability is Reachability.UNKNOWN]
+
+    @property
+    def assessed_findings(self) -> list[Finding]:
+        """Findings reachability could actually reach a verdict on."""
+        return [f for f in self.findings if f.reachability is not Reachability.UNKNOWN]
+
+    def noise_reduction(self) -> float:
+        """Fraction of *assessable* findings suppressed as non-actionable.
+
+        Computed over `assessed_findings`, not all findings. Including UNKNOWN
+        in the denominator would let the tool report "100% noise reduction" on a
+        scan where it assessed nothing -- which is exactly what happened the
+        first time this ran against live OSV data, where PyPI advisories carry
+        no symbol data and every finding lands UNKNOWN. Suppressing what you
+        could not evaluate is not noise reduction; it is a silent false
+        negative wearing the headline metric's clothes.
+        """
+        assessed = self.assessed_findings
+        if not assessed:
             return 0.0
-        return 1.0 - (len(self.actionable_findings) / len(self.findings))
+        actionable = sum(1 for f in assessed if f.actionable)
+        return 1.0 - (actionable / len(assessed))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -344,6 +366,8 @@ class ScanResult:
             "package_count": len(self.sbom.packages),
             "total_findings": len(self.findings),
             "actionable_findings": len(self.actionable_findings),
+            "unknown_findings": len(self.unknown_findings),
+            "assessed_findings": len(self.assessed_findings),
             "noise_reduction": round(self.noise_reduction(), 4),
             "stats": self.stats,
             "findings": [f.to_dict() for f in self.findings],

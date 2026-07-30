@@ -25,12 +25,24 @@ from .vulndb import DEFAULT_DB, VulnerabilityDB
 DEFAULT_AUDIT_LOG = Path(__file__).resolve().parents[2] / "reports" / "audit.jsonl"
 
 
+def _warn(message: str) -> None:
+    print(f"  note: {message}", file=sys.stderr)
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     result = scan_project(
         args.path,
         db_path=args.db,
         signing_key=args.sign,
         audit_log_path=args.audit_log,
+        live=args.live,
+        cache_live=args.cache,
+        overlay_heuristic=args.overlay_heuristic,
+        # EPSS defaults on with --live (real CVE ids to look up) and off for the
+        # local synthetic corpus, whose DEPS- ids have no EPSS score anyway.
+        epss=(args.live and not args.no_epss),
+        remediation_limit=(0 if args.no_llm else args.remediation_limit),
+        warn=_warn,
     )
 
     if args.json:
@@ -38,8 +50,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     else:
         print(console_summary(result))
 
+    source = result.stats.get("advisory_source", {})
+    if source.get("live") and not args.json:
+        print("  advisory source: OSV.dev (live)")
+        print(source.get("coverage_report", ""))
+        print()
+
     if args.out:
-        paths = write_reports(result, args.out)
+        paths = write_reports(result, args.out, vex=not args.no_vex)
         if not args.json:
             for kind, path in paths.items():
                 print(f"  wrote {kind:9} {path}")
@@ -118,6 +136,30 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--fail-on", type=float, metavar="RISK",
                       help="Exit 1 if an actionable finding reaches this risk score.")
     scan.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
+
+    live = scan.add_argument_group("live data (network, all opt-in)")
+    live.add_argument("--live", action="store_true",
+                      help="Query OSV.dev for real advisories instead of the local corpus. "
+                           "Falls back to local if OSV is unreachable.")
+    live.add_argument("--cache", action="store_true",
+                      help="With --live, cache fetched advisories locally for offline reuse.")
+    live.add_argument("--overlay-heuristic", action="store_true",
+                      help="Attribute a package's known dangerous API surface to advisories "
+                           "with no upstream symbol data. Widens reachability; a guess, not a fact.")
+    live.add_argument("--no-epss", action="store_true",
+                      help="Skip EPSS exploit-probability lookup (on by default with --live).")
+
+    out = scan.add_argument_group("output")
+    out.add_argument("--no-vex", action="store_true",
+                     help="Do not write vex.json alongside the other reports.")
+
+    llm = scan.add_argument_group("AI remediation (requires ANTHROPIC_API_KEY)")
+    llm.add_argument("--no-llm", action="store_true",
+                     help="Never call the Anthropic API.")
+    llm.add_argument("--remediation-limit", type=int, default=0, metavar="N",
+                     help="Generate fix guidance for the top N reachable findings "
+                          "(default 0 = off; 10 is a sensible value).")
+
     scan.set_defaults(func=_cmd_scan)
 
     sbom = sub.add_parser("sbom", help="Generate a CycloneDX SBOM.")

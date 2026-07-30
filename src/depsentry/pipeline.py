@@ -145,16 +145,19 @@ def scan_project(
 
         engine = RemediationEngine()
         if engine.available:
-            targets = [
-                f for f in findings if f.reachability is Reachability.REACHABLE
-            ][:remediation_limit]
-            generated = engine.annotate(targets, project_root=root)
+            targets = [f for f in findings if f.reachability is Reachability.REACHABLE]
+            generated = engine.annotate(
+                targets, project_root=root, limit=remediation_limit
+            )
             remediation_meta = {
                 "enabled": True,
                 "generated": generated,
-                "considered": len(targets),
+                "considered": engine.stats.considered,
+                "cache_hits": engine.stats.cache_hits,
+                "failures": len(engine.stats.failures),
                 "model": engine.model,
             }
+            engine.close()
         else:
             warn(
                 "Tip: set ANTHROPIC_API_KEY to get AI-powered remediation suggestions."
